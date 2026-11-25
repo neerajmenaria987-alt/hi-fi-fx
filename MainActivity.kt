@@ -14,13 +14,15 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -64,7 +66,8 @@ fun App() {
     var tab by remember { mutableIntStateOf(0) }
     Scaffold { pad ->
         Column(Modifier.padding(pad)) {
-            ServiceRow()
+            EnhancerRow()
+            HiFiModeRow()
             TabRow(selectedTabIndex = tab) {
                 listOf("EQ", "Effects", "Hi-Fi").forEachIndexed { i, t ->
                     Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t) })
@@ -75,18 +78,19 @@ fun App() {
     }
 }
 
+/** Master Enhancer switch: ON starts the background effects service, OFF stops it. */
 @Composable
-fun ServiceRow() {
+fun EnhancerRow() {
     val ctx = LocalContext.current
     val askNotif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     Row(
-        Modifier.fillMaxWidth().padding(16.dp),
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column {
-            Text("System-wide effects", style = MaterialTheme.typography.titleMedium)
-            Text("Works with players that share their audio session", style = MaterialTheme.typography.bodySmall)
+        Column(Modifier.weight(1f)) {
+            Text("Enhancer", style = MaterialTheme.typography.titleMedium)
+            Text("ON: effects apply to your music player", style = MaterialTheme.typography.bodySmall)
         }
         Switch(checked = EffectService.running, onCheckedChange = { on ->
             val i = Intent(ctx, EffectService::class.java)
@@ -98,40 +102,55 @@ fun ServiceRow() {
     }
 }
 
-private val PRESETS = mapOf(
-    "Flat" to listOf(0, 0, 0, 0, 0),
-    "Bass" to listOf(600, 400, 0, 0, 0),
-    "Vocal" to listOf(-200, 0, 400, 300, 0),
-    "Treble" to listOf(0, 0, 0, 400, 600),
-    "Rock" to listOf(500, 300, -200, 300, 500)
-)
+/** Hi-Fi mode: bass, 3D and loudness off, only the EQ runs. */
+@Composable
+fun HiFiModeRow() {
+    Row(
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Hi-Fi mode", style = MaterialTheme.typography.titleMedium)
+            Text("Bass, 3D and loudness off. Only EQ runs, for clean sound.", style = MaterialTheme.typography.bodySmall)
+        }
+        Switch(checked = Fx.hifi, onCheckedChange = { Fx.hifi = it; Fx.save(); Fx.applyAll() })
+    }
+}
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun EqTab() {
     val info = Fx.eqInfo
+    var cat by remember { mutableStateOf("All") }
     Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("Equalizer", style = MaterialTheme.typography.titleMedium)
             Switch(checked = Fx.eqOn, onCheckedChange = { Fx.eqOn = it; Fx.save(); Fx.applyAll() })
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PRESETS.forEach { (name, src) ->
-                OutlinedButton(onClick = {
-                    val n = info.freqs.size
-                    for (b in 0 until n) {
-                        val v = src[if (n == 1) 0 else b * (src.size - 1) / (n - 1)]
-                        Fx.levels[b] = v.coerceIn(info.min, info.max)
-                    }
-                    Fx.save(); Fx.applyAll()
-                }) { Text(name) }
+        Text(
+            "Presets (${Fx.PRESETS.size})  ·  " + if (Fx.preset.isEmpty()) "Custom" else Fx.preset,
+            Modifier.padding(top = 8.dp, bottom = 4.dp), style = MaterialTheme.typography.titleSmall
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("All", "Hi-Fi", "Music", "Indian", "Use", "Tone").forEach { c ->
+                if (c == cat) Button(onClick = { cat = c }) { Text(c) }
+                else OutlinedButton(onClick = { cat = c }) { Text(c) }
             }
         }
+        FlowRow(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Fx.PRESETS.filter { cat == "All" || it.cat == cat }.forEach { p ->
+                if (Fx.preset == p.name) Button(onClick = { Fx.applyPreset(p) }) { Text(p.name) }
+                else OutlinedButton(onClick = { Fx.applyPreset(p) }) { Text(p.name) }
+            }
+        }
+        OutlinedButton(onClick = { Fx.resetFlat() }, Modifier.padding(top = 12.dp)) { Text("Reset to flat") }
         info.freqs.forEachIndexed { b, hz ->
             val label = if (hz >= 1000) "${hz / 1000} kHz" else "$hz Hz"
             Text("$label   ${"%.1f".format(Fx.levels[b] / 100f)} dB", Modifier.padding(top = 8.dp))
             Slider(
                 value = Fx.levels[b].toFloat(),
-                onValueChange = { Fx.levels[b] = it.toInt(); Fx.applyAll() },
+                onValueChange = { Fx.levels[b] = it.toInt(); Fx.preset = ""; Fx.applyAll() },
                 onValueChangeFinished = { Fx.save() },
                 valueRange = info.min.toFloat()..info.max.toFloat()
             )
@@ -141,25 +160,28 @@ fun EqTab() {
 
 @Composable
 fun FxTab() {
+    val on = !Fx.hifi
     Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp)) {
-        Block("Bass boost", Fx.bassOn, { Fx.bassOn = it }, Fx.bass, 0, 1000, { Fx.bass = it }, "${Fx.bass / 10}%")
-        Block("Virtualizer (spatial widening)", Fx.virtOn, { Fx.virtOn = it }, Fx.virt, 0, 1000, { Fx.virt = it }, "${Fx.virt / 10}%")
-        Block("Loudness / volume boost", Fx.loudOn, { Fx.loudOn = it }, Fx.loud, 0, 1500, { Fx.loud = it }, "+${"%.1f".format(Fx.loud / 100f)} dB")
+        if (Fx.hifi) Text("Hi-Fi mode is ON, so these are switched off. Turn it off at the top to use them.", Modifier.padding(bottom = 12.dp), style = MaterialTheme.typography.bodyMedium)
+        Block("Bass Boost", on, Fx.bassOn, { Fx.bassOn = it }, Fx.bass, 0, 1000, { Fx.bass = it }, "${Fx.bass / 10}%")
+        Block("3D Surround", on, Fx.virtOn, { Fx.virtOn = it }, Fx.virt, 0, 1000, { Fx.virt = it }, "${Fx.virt / 10}%")
+        Block("Loudness Boost", on, Fx.loudOn, { Fx.loudOn = it }, Fx.loud, 0, 1500, { Fx.loud = it }, "+${"%.1f".format(Fx.loud / 100f)} dB")
         Text("Keep loudness low if you hear distortion. High values can clip and strain your headphones.", style = MaterialTheme.typography.bodySmall)
     }
 }
 
 @Composable
-fun Block(title: String, on: Boolean, setOn: (Boolean) -> Unit, v: Int, min: Int, max: Int, setV: (Int) -> Unit, shown: String) {
+fun Block(title: String, enabled: Boolean, on: Boolean, setOn: (Boolean) -> Unit, v: Int, min: Int, max: Int, setV: (Int) -> Unit, shown: String) {
     Card(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
         Column(Modifier.padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(title, style = MaterialTheme.typography.titleSmall)
-                Switch(checked = on, onCheckedChange = { setOn(it); Fx.save(); Fx.applyAll() })
+                Switch(checked = on && enabled, enabled = enabled, onCheckedChange = { setOn(it); Fx.save(); Fx.applyAll() })
             }
             Text(shown)
             Slider(
                 value = v.toFloat(),
+                enabled = enabled,
                 onValueChange = { setV(it.toInt()); Fx.applyAll() },
                 onValueChangeFinished = { Fx.save() },
                 valueRange = min.toFloat()..max.toFloat()
