@@ -14,7 +14,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -28,6 +31,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -54,7 +58,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Fx.init(applicationContext)
         setContent {
-            MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
+            val dark = when (Fx.theme) { 1 -> true; 2 -> false; else -> isSystemInDarkTheme() }
+            MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
                 Surface { App() }
             }
         }
@@ -69,11 +74,11 @@ fun App() {
             EnhancerRow()
             HiFiModeRow()
             TabRow(selectedTabIndex = tab) {
-                listOf("EQ", "Effects", "Hi-Fi").forEachIndexed { i, t ->
+                listOf("EQ", "Profiles", "Effects", "Hi-Fi").forEachIndexed { i, t ->
                     Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t) })
                 }
             }
-            when (tab) { 0 -> EqTab(); 1 -> FxTab(); else -> HiFiTab() }
+            when (tab) { 0 -> EqTab(); 1 -> ProfilesTab(); 2 -> FxTab(); else -> HiFiTab() }
         }
     }
 }
@@ -145,6 +150,20 @@ fun EqTab() {
             }
         }
         OutlinedButton(onClick = { Fx.resetFlat() }, Modifier.padding(top = 12.dp)) { Text("Reset to flat") }
+        Text("Clarity (highs)   ${"%.1f".format(Fx.clar)} dB", Modifier.padding(top = 12.dp))
+        Slider(
+            value = Fx.clar,
+            onValueChange = { Fx.clar = Math.round(it * 2) / 2f; Fx.applyAll() },
+            onValueChangeFinished = { Fx.save() },
+            valueRange = -6f..12f
+        )
+        Text("Preamp   ${"%.1f".format(Fx.pre)} dB")
+        Slider(
+            value = Fx.pre,
+            onValueChange = { Fx.pre = Math.round(it * 2) / 2f; Fx.applyAll() },
+            onValueChangeFinished = { Fx.save() },
+            valueRange = -12f..12f
+        )
         info.freqs.forEachIndexed { b, hz ->
             val label = if (hz >= 1000) "${hz / 1000} kHz" else "$hz Hz"
             Text("$label   ${"%.1f".format(Fx.levels[b] / 100f)} dB", Modifier.padding(top = 8.dp))
@@ -158,6 +177,49 @@ fun EqTab() {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ProfilesTab() {
+    var q by remember { mutableStateOf("") }
+    var cat by remember { mutableStateOf("All") }
+    val cats = listOf("All", "Root/Magisk", "Spatial", "Hi-Fi/DAC", "Studio", "Mobile/Car", "IEM/Planar")
+    val list = Fx.PROFILES.filter {
+        (cat == "All" || it.cat == cat) &&
+            (q.isBlank() || it.name.contains(q, true) || it.desc.contains(q, true) || it.cat.contains(q, true))
+    }
+    LazyColumn(Modifier.padding(horizontal = 16.dp)) {
+        item {
+            Column {
+                OutlinedTextField(
+                    value = q, onValueChange = { q = it }, singleLine = true,
+                    label = { Text("Search Dolby, Viper, 64 Audio, Moondrop...") },
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
+                )
+                FlowRow(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    cats.forEach { c ->
+                        val n = if (c == "All") Fx.PROFILES.size else Fx.PROFILES.count { it.cat == c }
+                        if (c == cat) Button(onClick = { cat = c }) { Text("$c ($n)") }
+                        else OutlinedButton(onClick = { cat = c }) { Text("$c ($n)") }
+                    }
+                }
+                Text("${list.size} / ${Fx.PROFILES.size} profiles", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "Approximate tuning styles named after products. They are not the real Dolby, Viper or measured headphone curves.",
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp)
+                )
+            }
+        }
+        items(list) { p ->
+            Card(Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { Fx.applyProfile(p) }) {
+                Column(Modifier.padding(12.dp)) {
+                    Text((if (Fx.preset == p.name) "\u2713 " else "") + p.name, style = MaterialTheme.typography.titleSmall)
+                    Text(p.desc, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun FxTab() {
     val on = !Fx.hifi
@@ -167,6 +229,9 @@ fun FxTab() {
         Block("3D Surround", on, Fx.virtOn, { Fx.virtOn = it }, Fx.virt, 0, 1000, { Fx.virt = it }, "${Fx.virt / 10}%")
         Block("Loudness Boost", on, Fx.loudOn, { Fx.loudOn = it }, Fx.loud, 0, 1500, { Fx.loud = it }, "+${"%.1f".format(Fx.loud / 100f)} dB")
         Text("Keep loudness low if you hear distortion. High values can clip and strain your headphones.", style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(onClick = { Fx.theme = (Fx.theme + 1) % 3; Fx.save() }, Modifier.padding(top = 16.dp)) {
+            Text("Theme: " + listOf("System", "Dark", "Light")[Fx.theme])
+        }
     }
 }
 
@@ -208,6 +273,7 @@ private fun encName(e: Int) = when (e) {
     else -> "enc $e"
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun HiFiTab() {
     val ctx = LocalContext.current
@@ -215,6 +281,18 @@ fun HiFiTab() {
     var devs by remember { mutableStateOf(am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).toList()) }
     var msg by remember { mutableStateOf("") }
     Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp)) {
+        Card(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+            Column(Modifier.padding(12.dp)) {
+                Text("Test sweep", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "A 6 second tone from 35 Hz to 18 kHz. Use it to hear your EQ and effects without a music player. Keep the volume low first.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Button(onClick = { if (Sweep.playing) Sweep.stop() else Sweep.start() }, Modifier.padding(top = 8.dp)) {
+                    Text(if (Sweep.playing) "Stop sweep" else "Play test sweep")
+                }
+            }
+        }
         Text("Output devices", style = MaterialTheme.typography.titleMedium)
         OutlinedButton(onClick = { devs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).toList() }) { Text("Refresh") }
         devs.forEach { d ->
@@ -247,6 +325,28 @@ fun HiFiTab() {
             Text("Open Developer options")
         }
         Text("Bit-perfect output needs Android 14 or newer and a USB DAC that supports it.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+        Card(Modifier.fillMaxWidth().padding(top = 16.dp)) {
+            Column(Modifier.padding(12.dp)) {
+                Text("Root tools (optional)", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Needs a rooted phone. These only read system info or add this app to the battery whitelist. They do not edit system files.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                FlowRow(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(onClick = { Root.run("Root check", "id") }) { Text("Check root") }
+                    OutlinedButton(onClick = {
+                        Root.run("Audio engine", "dumpsys media.audio_flinger", Regex("(?i)(sample rate|hal format|channel mask|latency)"), 24)
+                    }) { Text("Audio engine info") }
+                    OutlinedButton(onClick = {
+                        Root.run("Bluetooth codec", "dumpsys bluetooth_manager", Regex("(?i)codec"), 16)
+                    }) { Text("Bluetooth codec") }
+                    OutlinedButton(onClick = {
+                        Root.run("Keep app alive", "dumpsys deviceidle whitelist +com.example.hififx")
+                    }) { Text("Keep app alive") }
+                }
+                if (Root.out.isNotEmpty()) Text(Root.out, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall)
+            }
+        }
     }
 }
 
